@@ -4,7 +4,7 @@
 // COMMAND ----------
 
 // MAGIC %md
-// MAGIC This notebook, starts a streaming function to process a Kinesis Stream. 
+// MAGIC This notebook, starts a streaming application to process a Kinesis Stream. 
 // MAGIC 1. Listens and retrieves messages from the ci_delete kinesis stream
 // MAGIC 2. Converts the message to a case class 
 // MAGIC 2. Save the data to a S3 location
@@ -34,7 +34,7 @@ sc.hadoopConfiguration.set("fs.s3a.stsAssumeRole.arn", "arn:aws:iam::52291002483
 
 // COMMAND ----------
 
-package com.cisco.ciscoImpact.datalake.streaming.deleteStream1
+package com.cisco.ciscoImpact.datalake.streaming.deleteStream
 
 import com.cisco.utils.mongodb.JobContextMongo
 import com.cisco.impact.analytics.spark.dbi.mongodb.MongoDbSession
@@ -44,7 +44,7 @@ import com.cisco.datalake.model.{MongoAuth, MongoConfig}
 
 @SerialVersionUID(800L)
 class Params (@transient private val config: MongoConfig) extends Serializable {
-    val notebookName = "START_CI_DELETE_STREAM_PROCESSING"
+    val notebookName = "CI_DELETE_STREAM_PROCESSING"
    
 @transient val mongoDbSession = new MongoDbSession()
                                            .host(config.auth.host, config.auth.port.intValue)
@@ -74,7 +74,7 @@ override def toString = f"$notebookName%s;$fileLocation%s;$awsAccessKeyId%s;$aws
 
 // COMMAND ----------
 
-import com.cisco.ciscoImpact.datalake.streaming.deleteStream1._
+import com.cisco.ciscoImpact.datalake.streaming.deleteStream._
 import com.cisco.impact.analytics.spark.logger.WorkflowLogger
 import com.cisco.datalake.model.{MongoConfig, MongoAuth}
 
@@ -119,11 +119,13 @@ val streamingInputDF = spark.readStream
   .option("awsSecretKey", params.awsSecretKey)
   .option("maxFetchDuration", params.batchIntervalSeconds)
   .load()
-  .select(from_json(col("data").cast("string"), messageSchema).alias("parsed_value"))
+  .select(from_json(col("data").cast("string"), messageSchema).alias("parsed_value"),
+date_format(current_timestamp(), "HHddMMyyyy").alias("date"))
 
 
 val payload = streamingInputDF
-  .select($"parsed_value.storeId", $"parsed_value.app".as("appName"), $"parsed_value.tenant")
+  .select($"parsed_value.storeId", $"parsed_value.app".as("appName"),
+    $"parsed_value.tenant", $"date")
  
 logger.start()
 
@@ -132,10 +134,10 @@ spark.conf.set("spark.sql.shuffle.partitions", "2")
 
 val query = payload
   .writeStream
-  //.trigger(Trigger.Once)
   .format("parquet")
   .option("checkpointLocation", params.checkpointDir)
-  .option("path", params.fileLocation  + FileDirectory.getSubfolderNameFromDate() + ".parquet/")
+  .option("path", params.fileLocation)
+  .partitionBy("date")
   .outputMode("append") 
   .start()
 
@@ -143,10 +145,3 @@ val query = payload
 // COMMAND ----------
 
 //StreamingContext.getActive.foreach { _.stop(stopSparkContext = false) }
-
-// COMMAND ----------
-
-/*val stopActiveContext = true
-if (stopActiveContext) {    
-  StreamingContext.getActive.foreach { _.stop(stopSparkContext = false) }
-} */
